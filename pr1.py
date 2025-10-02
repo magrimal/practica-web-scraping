@@ -29,3 +29,6 @@ def citas_celebres(autor):
 
 def tags_por_autor():
     """"""
+
+if __name__ == '__main__':
+    print("This is only a test")

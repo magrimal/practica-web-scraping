@@ -1,0 +1,18 @@
+[project]
+name = "practica-web-scraping"
+version = "0.1.0"
+description = "Práctica de web scraping para la asignatura SGDI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beautifulsoup4",
+    "html5lib",
+    "black",
+    "selenium",
+    "requests",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+skip-string-normalization = true
