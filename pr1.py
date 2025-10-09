@@ -66,11 +66,91 @@ def bd_incrementos(umbral):
     print("]")
 
 
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.by import By
 
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from bs4 import BeautifulSoup
 def citas_celebres(autor):
-    """"""
+    
+    driver = webdriver.Chrome()
+    driver.get("https://quotes.toscrape.com/search.aspx")
+
+    driver.implicitly_wait(20)
+
+    element_author = WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.ID, "author")))
+    element_author.click()
+    element_author.send_keys(autor)
+    element_author.click()
+
+    html_for_tags = driver.page_source
+
+    html_quotes = []
+    
+    soup_for_tags = BeautifulSoup(html_for_tags, 'html5lib')
+    select_tag = soup_for_tags.css.select('select#tag')
+    options = select_tag[0].find_all("option")
+
+    quotes_by_tag = {}
+
+    for option in options[1:]:
+        driver.implicitly_wait(20)
+        
+        tag = option.getText().strip()
+
+        element_tag = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.ID, "tag")))
+
+        element_tag.click()
+        element_tag.send_keys(tag)
+        
+        element_tag.click()
+
+        element_button = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.NAME, "submit_button")))
+
+        element_button.click()
+
+        driver.implicitly_wait(20)
+
+        #driver.find_elements(By.CLASS_NAME, "content")
+
+        WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "quote")))
+
+        WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.CLASS_NAME, "content")))
+ 
+        html_quotes.append([tag, driver.page_source]) 
+
+    for tag, html_quote in html_quotes:
+        soup_quote = BeautifulSoup(html_quote, 'html5lib')
+        results = soup_quote.find("div", class_="results")
+        quotes = results.find_all("div", class_="quote")
+
+        #print(f"'{tag}': ")
+        
+        for quote in quotes:
+            content = quote.find("span", class_="content")
+
+            if tag not in quotes_by_tag:
+                quotes_by_tag[tag] = []
+
+            quotes_by_tag[tag].append(f"{content.getText().strip()}")
+
+            #print(f"{content.getText().strip()}")
+
+    #print(quotes_by_tag)
+    
+    for tag, quotes in quotes_by_tag.items():
+        print(f"'{tag}': {quotes}\n")
+
 
 def tags_por_autor():
     """"""
 
-bd_incrementos(2)
+#bd_incrementos(2)
+citas_celebres("Jane Austen")
