@@ -115,9 +115,7 @@ def citas_celebres(autor):
         element_button.click()
 
         driver.implicitly_wait(20)
-
-        #driver.find_elements(By.CLASS_NAME, "content")
-
+ 
         WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "quote")))
 
@@ -131,7 +129,6 @@ def citas_celebres(autor):
         results = soup_quote.find("div", class_="results")
         quotes = results.find_all("div", class_="quote")
 
-        #print(f"'{tag}': ")
         
         for quote in quotes:
             content = quote.find("span", class_="content")
@@ -140,17 +137,56 @@ def citas_celebres(autor):
                 quotes_by_tag[tag] = []
 
             quotes_by_tag[tag].append(f"{content.getText().strip()}")
-
-            #print(f"{content.getText().strip()}")
-
-    #print(quotes_by_tag)
-    
+ 
     for tag, quotes in quotes_by_tag.items():
         print(f"'{tag}': {quotes}\n")
 
 
 def tags_por_autor():
-    """"""
+    driver = webdriver.Chrome()
+    driver.get("https://quotes.toscrape.com/search.aspx")
+    driver.implicitly_wait(20)
+
+    html_autor = driver.page_source
+    soup_autor = BeautifulSoup(html_autor, 'html5lib')
+    select_author = soup_autor.css.select('select#author')
+    options_authors = select_author[0].find_all("option")
+
+    tags_per_author = {}
+
+    for option_author in options_authors[1:]:
+        author = option_author.getText().strip()
+        
+        element_author = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "author")))
+        
+        element_author.click()
+        element_author.send_keys(author)
+        
+        element_author = WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((By.ID, "author")))
+        
+        element_author.click()
+
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.ID, "tag")))
+
+        html_tag = driver.page_source
+        soup_tag = BeautifulSoup(html_tag, 'html5lib')
+        select_tag = soup_tag.css.select('select#tag')
+        options_tags = select_tag[0].find_all("option")
+
+        numero_tags = len(options_tags[1:])
+
+        if author not in tags_per_author:
+            tags_per_author[author] = []
+
+        tags_per_author[author] = numero_tags
+
+    driver.close()
+
+    print(tags_per_author)
 
 #bd_incrementos(2)
-citas_celebres("Jane Austen")
+#citas_celebres("Jane Austen")
+tags_por_autor()
