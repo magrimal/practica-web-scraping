@@ -60,10 +60,7 @@ def bd_incrementos(umbral):
     ordenados = sorted(fragmentos, key=lambda x: x[2], reverse=True)    
     mayores = list(filter(lambda x: x[2] > umbral, ordenados))
 
-    print("[")
-    for mayor in mayores:
-        print(f" {mayor},")
-    print("]")
+    return mayores
 
 
 from selenium import webdriver
@@ -138,9 +135,7 @@ def citas_celebres(autor):
 
             quotes_by_tag[tag].append(f"{content.getText().strip()}")
  
-    for tag, quotes in quotes_by_tag.items():
-        print(f"'{tag}': {quotes}\n")
-
+    return quotes_by_tag
 
 def tags_por_autor():
     driver = webdriver.Chrome()
@@ -185,7 +180,7 @@ def tags_por_autor():
 
     driver.close()
 
-    print(tags_per_author)
+    return tags_per_author
 
 #bd_incrementos(2)
 #citas_celebres("Jane Austen")
