@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import Select
 
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -137,17 +138,23 @@ def bd_incrementos(umbral: float) -> list[tuple[str, str, float]]:
     return sorted_tuples
 
 
-def obtener_autores(autor: str = None) -> list[str]:
+def obtener_autores(autor: str = None, driver = None) -> list[str]:
     """Obtiene la lista de autores disponibles en la página de citas célebres.
 
     Parámetros:
         - autor: str, si se especifica, devuelve solo ese autor si existe.
                  Si es None, devuelve todos los autores.
+        - driver: webdriver (opcional), si se proporciona reutiliza el driver existente.
+                  Si es None, crea uno nuevo.
 
     Retorna:
         - List[str]: lista de nombres de autores (uno o todos).
     """
-    driver = webdriver.Chrome()
+    close_driver = False
+    if driver is None:
+        driver = webdriver.Chrome()
+        close_driver = True
+
     driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
     driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
 
@@ -158,7 +165,8 @@ def obtener_autores(autor: str = None) -> list[str]:
 
     autores = [option.getText().strip() for option in options_authors[1:]]
 
-    driver.close()
+    if close_driver:
+        driver.close()
 
     if autor is not None:
         return [autor] if autor in autores else []
@@ -169,6 +177,15 @@ def obtener_autores(autor: str = None) -> list[str]:
 def citas_celebres(autor: str, driver=None) -> dict[str, list[str]]:
     """Extrae citas célebres de un autor específico desde la página web configurada.
 
+    El flujo de extracción es el siguiente:
+    1. Seleccionar el autor en el menú desplegable.
+    2. Obtener la lista de tags disponibles para ese autor.
+    3. Para cada tag:
+       a. Seleccionar el tag en el menú desplegable.
+       b. Hacer clic en el botón de búsqueda.
+       c. Esperar a que la página se actualice.
+       d. Extraer todas las citas mostradas en la página.
+
     Parámetros:
         - autor: str, nombre del autor cuyas citas se desean extraer.
         - driver: webdriver (opcional), si se proporciona reutiliza el driver existente.
@@ -177,92 +194,61 @@ def citas_celebres(autor: str, driver=None) -> dict[str, list[str]]:
     Retorna:
         - Dict[str, List[str]]: diccionario con tags como keys y listas de citas como values.
     """
+    # Utilizamos el driver proporcionado o creamos uno nuevo si es None
+    # Esto para optimizar múltiples llamadas a la función y evitar abrir/cerrar el driver repetidamente
     close_driver = False
     if driver is None:
         driver = webdriver.Chrome()
-        driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
-        driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
         close_driver = True
 
-    element_author = WebDriverWait(driver, 30).until(
+    driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
+
+    author_select = Select(WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
         EC.presence_of_element_located((By.ID, "author"))
-    )
-    element_author.click()
-    element_author.send_keys(autor)
-    element_author.click()
+    ))
 
-    # Wait for tag dropdown to be present after selecting author
-    WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
-        EC.presence_of_element_located((By.ID, "tag"))
-    )
-
-    html_for_tags = driver.page_source
-
-    html_quotes = []
-
-    soup_for_tags = BeautifulSoup(html_for_tags, 'html5lib')
-    select_tag = soup_for_tags.css.select('select#tag')
-
-    if not select_tag or len(select_tag) == 0:
+    # Si el autor no está en la lista, retornamos diccionario vacío
+    if autor not in [option.text for option in author_select.options]:
         if close_driver:
             driver.close()
         return {}
 
-    options = select_tag[0].find_all("option")
+    author_select.select_by_visible_text(autor)
 
+    tag_select = Select(WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+        EC.presence_of_element_located((By.ID, "tag"))
+    ))
+
+    tag_names = [option.text for option in tag_select.options[1:]]
     quotes_by_tag = {}
 
-    for option in options[1:]:
-        driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
-
-        tag = option.getText().strip()
-
-        element_tag = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+    for tag_name in tag_names:
+        tag_select_element = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
             EC.presence_of_element_located((By.ID, "tag"))
         )
+        tag_select = Select(tag_select_element)
 
-        element_tag.click()
-        element_tag.send_keys(tag)
+        tag_select.select_by_visible_text(tag_name)
 
-        element_tag.click()
-
-        element_button = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
-            EC.presence_of_element_located((By.NAME, "submit_button"))
-        )
-
+        element_button = driver.find_element(By.NAME, "submit_button")
         element_button.click()
 
-        driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
-
+        # Cuando se hace click en el botón de búsqueda, la página se recarga
+        # por lo que debemos esperar a que el elemento anterior desaparezca (staleness)
+        # y luego esperar a que el nuevo contenido esté presente
         WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "quote"))
+            EC.staleness_of(tag_select_element)
         )
-
         WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
             EC.presence_of_element_located((By.CLASS_NAME, "content"))
         )
 
-        html_quotes.append([tag, driver.page_source])
+        page_source = driver.page_source
+        soup = BeautifulSoup(page_source, "html5lib")
+        quote_elements = soup.find_all(class_="content")
 
-    for tag, html_quote in html_quotes:
-        soup_quote = BeautifulSoup(html_quote, "html5lib")
-        results = soup_quote.find("div", class_="results")
-
-        if not results:
-            continue
-
-        quotes = results.find_all("div", class_="quote")
-
-        for quote in quotes:
-            content = quote.find("span", class_="content")
-
-            if not content:
-                continue
-
-            if tag not in quotes_by_tag:
-                quotes_by_tag[tag] = []
-
-            quotes_by_tag[tag].append(f"{content.getText().strip()}")
+        quotes = [quote.get_text().strip() for quote in quote_elements]
+        quotes_by_tag[tag_name] = quotes
 
     if close_driver:
         driver.close()
@@ -273,30 +259,24 @@ def citas_celebres(autor: str, driver=None) -> dict[str, list[str]]:
 def tags_por_autor():
     """Cuenta el número de etiquetas asociadas a cada autor en la página de citas célebres.
 
+    El flujo de extracción es el siguiente:
+    1. Obtener la lista de autores disponibles.
+    2. Para cada autor:
+         a. Extraer las citas célebres utilizando la función citas_celebres.
+         b. Contar el número de etiquetas (tags) asociadas a ese autor.
+         c. Almacenar el resultado en un diccionario.
+
     Retorna:
         - Dict[str, int]: diccionario con el número de etiquetas por autor.
     """
     driver = webdriver.Chrome()
-    driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
-    driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
-
-    html_autor = driver.page_source
-    soup_autor = BeautifulSoup(html_autor, 'html5lib')
-    select_author = soup_autor.css.select('select#author')
-    options_authors = select_author[0].find_all("option")
-
-    # Extract all author names first
-    autores = [option.getText().strip() for option in options_authors[1:]]
+    autores = obtener_autores(driver=driver)
 
     tags_per_author = {}
 
     for autor in autores:
-        quotes_by_tag = citas_celebres(autor, driver)
-
-        if autor not in tags_per_author:
-            tags_per_author[autor] = 0
-
-        tags_per_author[autor] = len(quotes_by_tag)
+        citas_dict = citas_celebres(autor, driver)
+        tags_per_author[autor] = len(citas_dict)
 
     driver.close()
 
@@ -304,5 +284,5 @@ def tags_por_autor():
 
 
 # print(bd_incrementos(2))
-# print(citas_celebres("Jane Austen"))
-print(tags_por_autor())
+print(citas_celebres("Jane Austen"))
+#print(tags_por_autor())
