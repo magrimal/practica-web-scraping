@@ -19,69 +19,162 @@ de los demás.
 
 import requests
 from bs4 import BeautifulSoup
-def bd_incrementos(umbral):
-     
-    r = requests.get('https://db-engines.com/en/ranking', auth=('user', 'pass'))
-    r.status_code
-
-    soup = BeautifulSoup(r.text, 'html5lib')
-    tabla_necesaria = soup.find_all("table", "dbi")
-    tabla_necesaria_primer_elemento = tabla_necesaria[0]
-    tabla_tbody = tabla_necesaria_primer_elemento.tbody
-    tabla_tr = tabla_tbody.find_all("tr")
-
-    tabla_tr_partida = tabla_tr[3:]
-
-    fragmentos = []
-
-    for row in tabla_tr_partida:    
-        tabla_enlaces = row.find_all("a")
-        
-        NOMBRE_BD = tabla_enlaces[0].find(string=True, recursive=False)
-        
-        if(len(tabla_enlaces) > 1):
-            MODELO_PRINCIPAL_BD = tabla_enlaces[1].find(string=True, recursive=False).strip()
-        else:
-            tabla_th = row.find_all('th')
-            texto = tabla_th[1].find(string=True, recursive=False)
-            MODELO_PRINCIPAL_BD = texto.strip()
-        
-        tabla_td = row.find_all("td")
-        ultima_columna = tabla_td[-1]
-        tabla_ultima_columna = ultima_columna.contents
-        if(tabla_ultima_columna):
-            INCREMENTO_PUNTUACIÓN_ANUAL = tabla_ultima_columna[0]
-            if(type(INCREMENTO_PUNTUACIÓN_ANUAL) != float):
-                INCREMENTO_PUNTUACIÓN_ANUAL = float(INCREMENTO_PUNTUACIÓN_ANUAL.replace('±', ''))
-        else:
-            INCREMENTO_PUNTUACIÓN_ANUAL = 0.00
-                        
-        fragmentos.append((NOMBRE_BD, MODELO_PRINCIPAL_BD, INCREMENTO_PUNTUACIÓN_ANUAL))
-    ordenados = sorted(fragmentos, key=lambda x: x[2], reverse=True)    
-    mayores = list(filter(lambda x: x[2] > umbral, ordenados))
-
-    print("[")
-    for mayor in mayores:
-        print(f" {mayor},")
-    print("]")
-
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 
 from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support import expected_conditions
 from bs4 import BeautifulSoup
-def citas_celebres(autor):
-    
+
+
+"""
+Configuración de la página de DB-Engines para extraer información relevante.
+
+Keys:
+- url: URL de la página web a analizar.
+- main_table_class: Clase CSS de la tabla principal que contiene los datos.
+- main_table_header_class: Clase CSS de los encabezados de la tabla principal.
+"""
+DB_ENGINES_PAGE_CONFIG = {
+    "url": "https://db-engines.com/en/ranking",
+    "main_table_class": "dbi",
+    "main_table_header_class": "dbi_header",
+    "main_table_columns": {
+        "database_name": 0,
+        "main_model": 1,
+        "annual_score_increase": -1,
+    },
+}
+
+CITAS_CELEBRES_PAGE_CONFIG = {
+    "url": "https://quotes.toscrape.com/search.aspx",
+}
+
+BASE_WAIT_DRIVER_TIME = 20
+
+
+# TODO: we can cache here the HTML content to avoid multiple requests (this page doesn't change much)
+def get_page_content_from_url(url: str) -> str:
+    """Realiza una solicitud HTTP GET a la URL proporcionada y devuelve el contenido HTML de la página web.
+
+    Parámetros:
+        - url: str, la URL de la página web a la que se desea acceder.
+
+    Retorna:
+        - str: el contenido HTML de la página web.
+    """
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+    except requests.RequestException as e:
+        print(f"Error al realizar la solicitud HTTP: {e}")
+        return ""
+
+
+def bd_incrementos(umbral: float) -> list[tuple[str, str, float]]:
+    """Retorna lista de tuplas (NOMBRE_BD, MODELO_PRINCIPAL_BD, INCREMENTO_PUNTUACIÓN_ANUAL)
+    de las bases de datos con incremento anual mayor que umbral dado.
+
+    Parámetros:
+        - umbral: float, valor del umbral para filtrar las bases de datos.
+
+    Retorna:
+        - List[Tuple[str, str, float]]: lista de tuplas con la información
+          de las bases de datos que cumplen el criterio.
+    """
+    page_content = get_page_content_from_url(DB_ENGINES_PAGE_CONFIG.get("url"))
+    if not page_content:
+        return []
+
+    soup = BeautifulSoup(page_content, "html5lib")
+    main_table = soup.find_all("table", DB_ENGINES_PAGE_CONFIG.get("main_table_class"))
+    main_table_first_element = main_table[0]
+    main_table_tbody = main_table_first_element.tbody
+    main_table_rows = main_table_tbody.find_all("tr")
+
+    tuples = []
+
+    for row in main_table_rows:
+
+        if row.find("td", class_=DB_ENGINES_PAGE_CONFIG.get("main_table_header_class")):
+            continue
+
+        main_table_td = row.find_all("td")
+        main_table_th = row.find_all("th")
+
+        # TODO: is this ok?
+        if len(main_table_td) < 3 or len(main_table_th) < 2:
+            continue
+
+        database_name = (
+            main_table_th[DB_ENGINES_PAGE_CONFIG["main_table_columns"]["database_name"]]
+            .getText()
+            .strip()
+        )
+        main_model_cell = main_table_th[DB_ENGINES_PAGE_CONFIG["main_table_columns"]["main_model"]]
+        main_model = list(main_model_cell.strings)[0].strip()
+        increment = (
+            main_table_td[
+                DB_ENGINES_PAGE_CONFIG["main_table_columns"]["annual_score_increase"]
+            ]
+            .getText()
+            .strip()
+        )
+
+        try:
+            increment_value = float(increment.replace("±", ""))
+        except ValueError:
+            increment_value = 0.0
+
+        if increment_value > umbral:
+            tuples.append((database_name, main_model, increment_value))
+
+    sorted_tuples = sorted(tuples, key=lambda x: x[2], reverse=True)
+    return sorted_tuples
+
+
+def obtener_autores() -> list[str]:
+    """Obtiene la lista de autores disponibles en la página de citas célebres.
+
+    Retorna:
+        - List[str]: lista de nombres de autores disponibles.
+    """
     driver = webdriver.Chrome()
-    driver.get("https://quotes.toscrape.com/search.aspx")
+    driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
+    driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
 
-    driver.implicitly_wait(20)
+    html_autor = driver.page_source
+    soup_autor = BeautifulSoup(html_autor, "html5lib")
+    select_author = soup_autor.css.select("select#author")
+    options_authors = select_author[0].find_all("option")
 
-    element_author = WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.ID, "author")))
+    autores = [option.getText().strip() for option in options_authors[1:]]
+
+    driver.close()
+
+    return autores
+
+
+def citas_celebres(autor: str) -> list[str]:
+    """Extrae citas célebres de un autor específico desde la página web configurada.
+
+    Parámetros:
+        - autor: str, nombre del autor cuyas citas se desean extraer.
+
+    Retorna:
+        - List[str]: lista de citas célebres del autor.
+    """
+    driver = webdriver.Chrome()
+    driver.get(CITAS_CELEBRES_PAGE_CONFIG.get("url"))
+
+    driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
+
+    element_author = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+        expected_conditions.presence_of_element_located((By.ID, "author"))
+    )
     element_author.click()
     element_author.send_keys(autor)
     element_author.click()
@@ -89,47 +182,49 @@ def citas_celebres(autor):
     html_for_tags = driver.page_source
 
     html_quotes = []
-    
-    soup_for_tags = BeautifulSoup(html_for_tags, 'html5lib')
-    select_tag = soup_for_tags.css.select('select#tag')
+
+    soup_for_tags = BeautifulSoup(html_for_tags, "html5lib")
+    select_tag = soup_for_tags.css.select("select#tag")
     options = select_tag[0].find_all("option")
 
     quotes_by_tag = {}
 
     for option in options[1:]:
-        driver.implicitly_wait(20)
-        
+        driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
+
         tag = option.getText().strip()
 
-        element_tag = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.ID, "tag")))
+        element_tag = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+            expected_conditions.presence_of_element_located((By.ID, "tag"))
+        )
 
         element_tag.click()
         element_tag.send_keys(tag)
-        
         element_tag.click()
 
-        element_button = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.NAME, "submit_button")))
+        element_button = WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+            expected_conditions.presence_of_element_located((By.NAME, "submit_button"))
+        )
 
         element_button.click()
 
-        driver.implicitly_wait(20)
- 
-        WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "quote")))
+        driver.implicitly_wait(BASE_WAIT_DRIVER_TIME)
 
-        WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "content")))
- 
-        html_quotes.append([tag, driver.page_source]) 
+        WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+            expected_conditions.presence_of_element_located((By.CLASS_NAME, "quote"))
+        )
+
+        WebDriverWait(driver, BASE_WAIT_DRIVER_TIME).until(
+            expected_conditions.presence_of_element_located((By.CLASS_NAME, "content"))
+        )
+
+        html_quotes.append([tag, driver.page_source])
 
     for tag, html_quote in html_quotes:
-        soup_quote = BeautifulSoup(html_quote, 'html5lib')
+        soup_quote = BeautifulSoup(html_quote, "html5lib")
         results = soup_quote.find("div", class_="results")
         quotes = results.find_all("div", class_="quote")
 
-        
         for quote in quotes:
             content = quote.find("span", class_="content")
 
@@ -137,56 +232,32 @@ def citas_celebres(autor):
                 quotes_by_tag[tag] = []
 
             quotes_by_tag[tag].append(f"{content.getText().strip()}")
- 
-    for tag, quotes in quotes_by_tag.items():
-        print(f"'{tag}': {quotes}\n")
+
+    driver.close()
+    return quotes_by_tag
 
 
 def tags_por_autor():
-    driver = webdriver.Chrome()
-    driver.get("https://quotes.toscrape.com/search.aspx")
-    driver.implicitly_wait(20)
+    """Cuenta el número de etiquetas asociadas a cada autor en la página de citas célebres.
 
-    html_autor = driver.page_source
-    soup_autor = BeautifulSoup(html_autor, 'html5lib')
-    select_author = soup_autor.css.select('select#author')
-    options_authors = select_author[0].find_all("option")
+    Retorna:
+        - Dict[str, int]: diccionario con el número de etiquetas por autor.
+    """
+    autores = obtener_autores()
 
     tags_per_author = {}
 
-    for option_author in options_authors[1:]:
-        author = option_author.getText().strip()
-        
-        element_author = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.ID, "author")))
-        
-        element_author.click()
-        element_author.send_keys(author)
-        
-        element_author = WebDriverWait(driver, 20).until(
-            EC.element_to_be_clickable((By.ID, "author")))
-        
-        element_author.click()
-
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.ID, "tag")))
-
-        html_tag = driver.page_source
-        soup_tag = BeautifulSoup(html_tag, 'html5lib')
-        select_tag = soup_tag.css.select('select#tag')
-        options_tags = select_tag[0].find_all("option")
-
-        numero_tags = len(options_tags[1:])
+    for author in autores:
+        quotes_by_tag = citas_celebres(author)
 
         if author not in tags_per_author:
-            tags_per_author[author] = []
+            tags_per_author[author] = 0
 
-        tags_per_author[author] = numero_tags
+        tags_per_author[author] = len(quotes_by_tag)
 
-    driver.close()
+    return tags_per_author
 
-    print(tags_per_author)
 
-#bd_incrementos(2)
-#citas_celebres("Jane Austen")
-tags_por_autor()
+print(bd_incrementos(2))
+# citas_celebres("Jane Austen")
+# tags_por_autor()
